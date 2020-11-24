@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"fmt"
+	rtm "github.com/lollllcat/GOCC/tools/gocc/rtmlib"
 	"io"
 	"os"
 	"sort"
@@ -258,6 +259,7 @@ func (tx *Tx) rollback() {
 }
 
 func (tx *Tx) close() {
+	optiLock := rtm.OptiLock{}
 	if tx.db == nil {
 		return
 	}
@@ -272,13 +274,13 @@ func (tx *Tx) close() {
 		tx.db.rwlock.Unlock()
 
 		// Merge statistics.
-		tx.db.statlock.Lock()
+		optiLock.WLock(&tx.db.statlock)
 		tx.db.stats.FreePageN = freelistFreeN
 		tx.db.stats.PendingPageN = freelistPendingN
 		tx.db.stats.FreeAlloc = (freelistFreeN + freelistPendingN) * tx.db.pageSize
 		tx.db.stats.FreelistInuse = freelistAlloc
 		tx.db.stats.TxStats.add(&tx.stats)
-		tx.db.statlock.Unlock()
+		optiLock.WUnlock(&tx.db.statlock)
 	} else {
 		tx.db.removeTx(tx)
 	}

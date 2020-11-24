@@ -3,6 +3,7 @@ package bolt
 import (
 	"errors"
 	"fmt"
+	rtm "github.com/lollllcat/GOCC/tools/gocc/rtmlib"
 	"hash/fnv"
 	"log"
 	"os"
@@ -464,6 +465,7 @@ func (db *DB) Begin(writable bool) (*Tx, error) {
 }
 
 func (db *DB) beginTx() (*Tx, error) {
+	optiLock := rtm.OptiLock{}
 	// Lock the meta pages while we initialize the transaction. We obtain
 	// the meta lock before the mmap lock because that's the order that the
 	// write transaction will obtain them.
@@ -493,10 +495,10 @@ func (db *DB) beginTx() (*Tx, error) {
 	db.metalock.Unlock()
 
 	// Update the transaction stats.
-	db.statlock.Lock()
+	optiLock.WLock(&db.statlock)
 	db.stats.TxN++
 	db.stats.OpenTxN = n
-	db.statlock.Unlock()
+	optiLock.WUnlock(&db.statlock)
 
 	return t, nil
 }
@@ -543,11 +545,12 @@ func (db *DB) beginRWTx() (*Tx, error) {
 
 // removeTx removes a transaction from the database.
 func (db *DB) removeTx(tx *Tx) {
+	optiLock := rtm.OptiLock{}
 	// Release the read lock on the mmap.
 	db.mmaplock.RUnlock()
 
 	// Use the meta lock to restrict access to the DB object.
-	db.metalock.Lock()
+	optiLock.Lock(&db.metalock)
 
 	// Remove the transaction.
 	for i, t := range db.txs {
@@ -562,13 +565,13 @@ func (db *DB) removeTx(tx *Tx) {
 	n := len(db.txs)
 
 	// Unlock the meta pages.
-	db.metalock.Unlock()
+	optiLock.Unlock(&db.metalock)
 
 	// Merge statistics.
-	db.statlock.Lock()
+	optiLock.WLock(&db.statlock)
 	db.stats.OpenTxN = n
 	db.stats.TxStats.add(&tx.stats)
-	db.statlock.Unlock()
+	optiLock.WUnlock(&db.statlock)
 }
 
 // Update executes a function within the context of a read-write managed transaction.
@@ -702,14 +705,15 @@ func (b *batch) trigger() {
 // run performs the transactions in the batch and communicates results
 // back to DB.Batch.
 func (b *batch) run() {
-	b.db.batchMu.Lock()
+	optiLock := rtm.OptiLock{}
+	optiLock.Lock(&b.db.batchMu)
 	b.timer.Stop()
 	// Make sure no new work is added to this batch, but don't break
 	// other batches.
 	if b.db.batch == b {
 		b.db.batch = nil
 	}
-	b.db.batchMu.Unlock()
+	optiLock.Unlock(&b.db.batchMu)
 
 retry:
 	for len(b.calls) > 0 {
@@ -777,8 +781,9 @@ func (db *DB) Sync() error { return fdatasync(db) }
 // Stats retrieves ongoing performance stats for the database.
 // This is only updated when a transaction closes.
 func (db *DB) Stats() Stats {
-	db.statlock.RLock()
-	defer db.statlock.RUnlock()
+	optiLock := rtm.OptiLock{}
+	optiLock.RLock(&db.statlock)
+	defer optiLock.RUnlock(&db.statlock)
 	return db.stats
 }
 
